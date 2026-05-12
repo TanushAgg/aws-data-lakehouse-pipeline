@@ -1,0 +1,235 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Parallel_Transform_Jobs",
+  "States": {
+    "Parallel_Transform_Jobs": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "glue_products_transform_job",
+          "States": {
+            "glue_products_transform_job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "data-engineering-transform-products_job"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "glue_customer_transform_job",
+          "States": {
+            "glue_customer_transform_job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "data-engineering-trnasform-customer_job"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "glue_orders_transform_job",
+          "States": {
+            "glue_orders_transform_job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "data-engineering-transform-orders_job"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "glue_orderdetails_transform_job",
+          "States": {
+            "glue_orderdetails_transform_job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "data-engineering-transform-orderdetails_job"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "Wait_5_sec"
+    },
+    "Wait_5_sec": {
+      "Type": "Wait",
+      "Seconds": 5,
+      "Next": "Parallel_Load_Dimension"
+    },
+    "Parallel_Load_Dimension": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "glue_products_load_job",
+          "States": {
+            "glue_products_load_job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "data-engineering-load-product_job"
+              },
+              "Next": "sp_merge_dim_product"
+            },
+            "sp_merge_dim_product": {
+              "Type": "Task",
+              "Parameters": {
+                "Sql": "CALL sales.sp_merge_dim_product();",
+                "Database": "production",
+                "SecretArn": "arn:aws:secretsmanager:us-east-1:046049464486:secret:redshift!data-engineering-project-redshift-namespace-admin-x54c1W",
+                "WorkgroupName": "arn:aws:redshift-serverless:us-east-1:046049464486:workgroup/82946b3c-7249-4d08-aa47-080efe00ab2f"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:redshiftdata:executeStatement",
+              "ResultPath": "$.sql_output",
+              "Next": "Wait_on_sp_merge_dim_produict"
+            },
+            "Wait_on_sp_merge_dim_produict": {
+              "Type": "Wait",
+              "Seconds": 5,
+              "Next": "sp_merge_dim_product_status_check"
+            },
+            "sp_merge_dim_product_status_check": {
+              "Type": "Task",
+              "Parameters": {
+                "Id.$": "$.sql_output.Id"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:redshiftdata:describeStatement",
+              "ResultPath": "$.sql_output",
+              "Next": "Choice"
+            },
+            "Choice": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Next": "product_dim_pass_to_next",
+                  "Variable": "$.sql_output.Status",
+                  "StringEquals": "FINISHED"
+                },
+                {
+                  "Next": "Fail",
+                  "Variable": "$.sql_output.Status",
+                  "StringEquals": "FAILED"
+                }
+              ],
+              "Default": "Wait_on_sp_merge_dim_produict"
+            },
+            "product_dim_pass_to_next": {
+              "Type": "Pass",
+              "End": true
+            },
+            "Fail": {
+              "Type": "Fail"
+            }
+          }
+        },
+        {
+          "StartAt": "glue_customers_load_job",
+          "States": {
+            "glue_customers_load_job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "data-engineering-load-customer_job"
+              },
+              "Next": "sp_merge_dim_customer"
+            },
+            "sp_merge_dim_customer": {
+              "Type": "Task",
+              "Parameters": {
+                "Sql": "CALL sales.sp_merge_dim_customer();",
+                "Database": "production",
+                "SecretArn": "arn:aws:secretsmanager:us-east-1:046049464486:secret:redshift!data-engineering-project-redshift-namespace-admin-x54c1W",
+                "WorkgroupName": "arn:aws:redshift-serverless:us-east-1:046049464486:workgroup/82946b3c-7249-4d08-aa47-080efe00ab2f"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:redshiftdata:executeStatement",
+              "ResultPath": "$.sql_output",
+              "Next": "Wait_on_sp_merge_dim_customer"
+            },
+            "Wait_on_sp_merge_dim_customer": {
+              "Type": "Wait",
+              "Seconds": 5,
+              "Next": "DescribeStatement"
+            },
+            "DescribeStatement": {
+              "Type": "Task",
+              "Parameters": {
+                "Id.$": "$.sql_output.Id"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:redshiftdata:describeStatement",
+              "ResultPath": "$.sql_output",
+              "Next": "Choice (1)"
+            },
+            "Choice (1)": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Next": "customer_dim_pass_to_next",
+                  "Variable": "$.sql_output.Status",
+                  "StringEquals": "FINISHED"
+                },
+                {
+                  "Next": "Fail (1)",
+                  "Variable": "$.sql_output.Status",
+                  "StringEquals": "FAILED"
+                }
+              ],
+              "Default": "Wait_on_sp_merge_dim_customer"
+            },
+            "customer_dim_pass_to_next": {
+              "Type": "Pass",
+              "End": true
+            },
+            "Fail (1)": {
+              "Type": "Fail"
+            }
+          }
+        }
+      ],
+      "Next": "Parallel_Load_Facts"
+    },
+    "Parallel_Load_Facts": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "glue_orders_load_job",
+          "States": {
+            "glue_orders_load_job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "data-engineering-load-orders_job"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "glue_orderdetails_load_job",
+          "States": {
+            "glue_orderdetails_load_job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "data-engineering-load-orderdetails_job"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  },
+  "QueryLanguage": "JSONPath"
+}
