@@ -1,1 +1,0 @@
-# aws-data-lakehouse-pipeline
